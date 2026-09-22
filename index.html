@@ -744,76 +744,21 @@ window.importData=function(file){
  r.onload=()=>{try{
   const d=JSON.parse(r.result);
   if(typeof d!=='object'||!d)throw new Error('bad');
-  let n=0;
-  Object.keys(d).forEach(k=>{if(k.indexOf('roma.preview.')===0&&k!=='roma.preview.fix.v1'){localStorage.setItem(k,JSON.stringify(d[k]));n++}});
-  if(!n)throw new Error('nokeys');
-  toast('导入 '+n+' 项数据，正在刷新…');
-  setTimeout(()=>location.reload(),900);
+  const P=d['roma.preview.players.v1'],R=d['roma.preview.records.v1'];
+  if(!Array.isArray(P)||!Array.isArray(R))throw new Error('nokeys');
+  players=P;records=R;
+  if(Array.isArray(d['roma.preview.outlets.v1']))outlets=d['roma.preview.outlets.v1'];
+  if(Array.isArray(d['roma.preview.ratings.v1']))ratings=d['roma.preview.ratings.v1'];
+  persist();
+  toast('数据导入成功，正在同步云端…');
+  render();
+  setTimeout(()=>toast('导入完成：'+players.length+' 名球员 · '+records.length+' 条记录'),1500);
  }catch(e){toast('导入失败：不是有效的数据文件')}};
  r.readAsText(file);
 };
-function openEditMatch(){
- const gs=groups();
- if(!gs.length)return toast('暂无比赛记录');
- state.editMatchKey=state.expMatch||gs[gs.length-1].key;
- state.emHa='';
- state.editMatchOpen=true;
- render();
-}
-function setEmHa(h){state.emHa=h;document.querySelectorAll('[data-ha]').forEach(c=>{if(c.closest('#emCard'))c.classList.toggle('on',c.dataset.ha===h)})}
-function editMatchModalHtml(){
- const gs=groups();
- const g=gs.find(x=>x.key===state.editMatchKey)||gs[gs.length-1];
- if(!g)return '';
- const ha=state.emHa||g.homeAway;
- const opts=gs.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(x=>`<option value="${esc(x.key)}" ${x.key===g.key?'selected':''}>${x.date} · ${x.homeAway==='主场'?'罗马 VS '+esc(x.opponent):esc(x.opponent)+' VS 罗马'} · ${scoreTxt(x.homeAway,x.teamScore,x.opponentScore)}</option>`).join('');
- const haBtn=h=>`<button type="button" data-ha="${h}" class="chip ${ha===h?'on':''}" style="flex:1;padding:9px" onclick="setEmHa('${h}')">${h}</button>`;
- return `<div style="position:fixed;inset:0;z-index:60;background:rgba(3,5,10,.72);display:flex;align-items:center;justify-content:center" onclick="if(event.target===this){state.editMatchOpen=false;render()}">
- <div id="emCard" style="width:440px;background:#0c1220;border:1px solid #1a2540;border-radius:2px;box-shadow:0 24px 60px rgba(0,0,0,.75)">
-  <div class="phead"><span class="display-label">编辑比赛 / EDIT MATCH</span><button onclick="state.editMatchOpen=false;render()" style="background:none;border:none;color:#4a5568;cursor:pointer;font-size:14px;padding:0">✕</button></div>
-  <div style="padding:16px;display:grid;gap:12px">
-   <div class="fld"><label>选择比赛</label><select id="emMatch" class="inp" onchange="state.editMatchKey=this.value;state.emHa='';render()">${opts}</select></div>
-   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-    <div class="fld"><label>比赛日期</label><input id="emDate" class="inp" type="date" value="${g.date}"/></div>
-    <div class="fld"><label>赛事</label><input id="emComp" class="inp" value="${esc(g.competition)}"/></div>
-   </div>
-   <div class="fld"><label>对阵（对手）</label><input id="emOpp" class="inp" value="${esc(g.opponent)}"/></div>
-   <div class="fld"><label>主客场</label><div style="display:flex;gap:6px">${haBtn('主场')}${haBtn('客场')}</div></div>
-   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-    <div class="fld"><label>我方比分</label><input id="emTs" class="inp" type="number" min="0" value="${g.teamScore}"/></div>
-    <div class="fld"><label>对手比分</label><input id="emOs" class="inp" type="number" min="0" value="${g.opponentScore}"/></div>
-   </div>
-   <button class="btn solid" style="justify-content:center;padding:11px" onclick="saveEditMatch()">保存修改</button>
-  </div>
- </div>
-</div>`;
-}
-function saveEditMatch(){
- if(!editable())return toast('只读模式：请管理员登录后编辑');
- try{
-  const g=groups().find(x=>x.key===state.editMatchKey);
-  if(!g)return toast('未找到比赛，请重新打开编辑');
-  if(!document.getElementById('emDate'))return toast('表单未加载，请重新打开编辑');
-  const date=document.getElementById('emDate').value||g.date;
-  const competition=clean(document.getElementById('emComp').value).trim()||g.competition;
-  const opponent=clean(document.getElementById('emOpp').value).trim();
-  if(!opponent)return toast('请填写对手');
-  const ha=state.emHa||g.homeAway;
-  const ts=Number(document.getElementById('emTs').value)||0, os=Number(document.getElementById('emOs').value)||0;
-  const nk=date+'|'+opponent;
-  let n=0;
-  records.forEach(r=>{if(r.date===g.date&&r.opponent===g.opponent){r.date=date;r.competition=competition;r.opponent=opponent;r.homeAway=ha;r.teamScore=ts;r.opponentScore=os;n++}});
-  if(!n)return toast('没有匹配的记录被更新（该场数据可能已变动，请重新打开编辑）');
-  if(state.expMatch===g.key)state.expMatch=nk;
-  if(state.sel===g.key)state.sel=nk;
-  state.editMatchKey=nk;state.emHa='';state.editMatchOpen=false;
-  persist();
-  toast('比赛信息已更新（'+n+' 条记录）');
-  render();
- }catch(e){toast('保存出错：'+e.message)}
-}
-
 let sb=null,session=null,whitelist=[],pushing=false,pushTimer=null,cloudReady=false;
+const SUPA_URL='https://qzxqrcdnrhlzmzmuwfmb.supabase.co';
+const SUPA_KEY='sb_publishable_pK_u2i02loIdsMPXZh7Tow_LRCAsadX';
 function editable(){return !!(session&&session.user&&whitelist.includes(session.user.email))}
 function schedulePush(){clearTimeout(pushTimer);pushTimer=setTimeout(cloudPush,800)}
 async function cloudPull(){
@@ -847,7 +792,7 @@ async function cloudPush(){
 async function initCloud(){
  try{
   if(!window.supabase){updateAuthUI();return}
-  sb=supabase.createClient('https://qzxqrcdnrhlzmzmuwfmb.supabase.co','sb_publishable_pK_u2i02loIdsMPXZh7Tow_LRCAsadX');
+  sb=supabase.createClient(SUPA_URL,SUPA_KEY);
   const {data}=await sb.auth.getSession();session=data.session;
   if(session){const {data:w}=await sb.from('admin_whitelist').select('email');whitelist=(w||[]).map(x=>x.email)}
   cloudReady=await cloudPull();
