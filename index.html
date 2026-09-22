@@ -776,18 +776,23 @@ async function cloudPull(){
  }catch(e){return false}
 }
 async function cloudPush(){
- if(!sb||!cloudReady||!editable()||pushing)return;
+ if(!sb||!editable()||pushing)return;
+ if(!cloudReady){toast('⚠ 云端未连接（数据权限未生效），本次修改仅保存在本地');return}
  pushing=true;
+ const errs=[];
+ const chk=(r,t)=>{if(r&&r.error)errs.push(t+'：'+(r.error.message||r.error.code||'未知错误'))};
  try{
-  await sb.from('players').upsert(players.map(p=>({id:p.id,name:p.name,number:p.number,position:p.position,created_at:p.createdAt})));
-  await sb.from('outlets').upsert(outlets.map(o=>({id:o.id,name:o.name})));
-  await sb.from('records').upsert(records.map(r=>({id:r.id,player_id:r.playerId,date:r.date,opponent:r.opponent,competition:r.competition,home_away:r.homeAway,team_score:r.teamScore,opponent_score:r.opponentScore,minutes:r.minutes,goals:r.goals,assists:r.assists,shots:r.shots,saves:r.saves,shots_on_target:r.shotsOnTarget,key_passes:r.keyPasses,passes:r.passes,pass_accuracy:r.passAccuracy,tackles:r.tackles,interceptions:r.interceptions,fouls:r.fouls,yellow_cards:r.yellowCards,red_cards:r.redCards,rating:r.rating==null?null:r.rating,starter:r.starter!==false})));
-  await sb.from('media_ratings').upsert(ratings.map(x=>({id:x.id,record_id:x.recordId,outlet_id:x.outletId,score:x.score})));
+  chk(await sb.from('players').upsert(players.map(p=>({id:p.id,name:p.name,number:p.number,position:p.position,created_at:p.createdAt}))),'球员');
+  chk(await sb.from('outlets').upsert(outlets.map(o=>({id:o.id,name:o.name}))),'媒体');
+  chk(await sb.from('records').upsert(records.map(r=>({id:r.id,player_id:r.playerId,date:r.date,opponent:r.opponent,competition:r.competition,home_away:r.homeAway,team_score:r.teamScore,opponent_score:r.opponentScore,minutes:r.minutes,goals:r.goals,assists:r.assists,shots:r.shots,saves:r.saves,shots_on_target:r.shotsOnTarget,key_passes:r.keyPasses,passes:r.passes,pass_accuracy:r.passAccuracy,tackles:r.tackles,interceptions:r.interceptions,fouls:r.fouls,yellow_cards:r.yellowCards,red_cards:r.redCards,rating:r.rating==null?null:r.rating,starter:r.starter!==false}))),'比赛记录');
+  chk(await sb.from('media_ratings').upsert(ratings.map(x=>({id:x.id,record_id:x.recordId,outlet_id:x.outletId,score:x.score}))),'媒体评分');
   for(const [t,arr] of [['players',players],['outlets',outlets],['records',records],['media_ratings',ratings]]){
    const {data:remote}=await sb.from(t).select('id');
-   if(remote&&remote.length>arr.length){const keep=new Set(arr.map(x=>x.id));const del=remote.filter(x=>!keep.has(x.id)).map(x=>x.id);if(del.length)await sb.from(t).delete().in('id',del)}
+   if(remote&&remote.length>arr.length){const keep=new Set(arr.map(x=>x.id));const del=remote.filter(x=>!keep.has(x.id)).map(x=>x.id);if(del.length){const dr=await sb.from(t).delete().in('id',del);chk(dr,t+'清理')}}
   }
- }catch(e){console.warn('云端同步失败',e)}
+  if(errs.length){console.error('云端同步失败',errs);toast('云端同步失败：'+errs[0])}
+  else console.log('云端同步完成');
+ }catch(e){console.warn('云端同步异常',e);toast('云端同步异常：'+((e&&e.message)||e))}
  setTimeout(()=>pushing=false,600);
 }
 async function initCloud(){
@@ -841,6 +846,66 @@ async function authLogout(){
  session=null;whitelist=[];
  toast('已退出登录');
  render();
+}
+function openEditMatch(){
+ const gs=groups();
+ if(!gs.length)return toast('暂无比赛记录');
+ state.editMatchKey=state.expMatch||gs[gs.length-1].key;
+ state.emHa='';
+ state.editMatchOpen=true;
+ render();
+}
+function setEmHa(h){state.emHa=h;document.querySelectorAll('#emCard [data-ha]').forEach(c=>c.classList.toggle('on',c.dataset.ha===h))}
+function editMatchModalHtml(){
+ const gs=groups();
+ const g=gs.find(x=>x.key===state.editMatchKey)||gs[gs.length-1];
+ if(!g)return '';
+ const ha=state.emHa||g.homeAway;
+ const opts=gs.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(x=>`<option value="${esc(x.key)}" ${x.key===g.key?'selected':''}>${x.date} · ${x.homeAway==='主场'?'罗马 VS '+esc(x.opponent):esc(x.opponent)+' VS 罗马'} · ${scoreTxt(x.homeAway,x.teamScore,x.opponentScore)}</option>`).join('');
+ const haBtn=h=>`<button type="button" data-ha="${h}" class="chip ${ha===h?'on':''}" style="flex:1;padding:9px" onclick="setEmHa('${h}')">${h}</button>`;
+ return `<div style="position:fixed;inset:0;z-index:60;background:rgba(3,5,10,.72);display:flex;align-items:center;justify-content:center" onclick="if(event.target===this){state.editMatchOpen=false;render()}">
+ <div id="emCard" style="width:440px;background:#0c1220;border:1px solid #1a2540;border-radius:2px;box-shadow:0 24px 60px rgba(0,0,0,.75)">
+  <div class="phead"><span class="display-label">编辑比赛 / EDIT MATCH</span><button onclick="state.editMatchOpen=false;render()" style="background:none;border:none;color:#4a5568;cursor:pointer;font-size:14px;padding:0">✕</button></div>
+  <div style="padding:16px;display:grid;gap:12px">
+   <div class="fld"><label>选择比赛</label><select id="emMatch" class="inp" onchange="state.editMatchKey=this.value;state.emHa='';render()">${opts}</select></div>
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="fld"><label>比赛日期</label><input id="emDate" class="inp" type="date" value="${g.date}"/></div>
+    <div class="fld"><label>赛事</label><input id="emComp" class="inp" value="${esc(g.competition)}"/></div>
+   </div>
+   <div class="fld"><label>对阵（对手）</label><input id="emOpp" class="inp" value="${esc(g.opponent)}"/></div>
+   <div class="fld"><label>主客场</label><div style="display:flex;gap:6px">${haBtn('主场')}${haBtn('客场')}</div></div>
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="fld"><label>我方比分</label><input id="emTs" class="inp" type="number" min="0" value="${g.teamScore}"/></div>
+    <div class="fld"><label>对手比分</label><input id="emOs" class="inp" type="number" min="0" value="${g.opponentScore}"/></div>
+   </div>
+   <button class="btn solid" style="justify-content:center;padding:11px" onclick="saveEditMatch()">保存修改</button>
+  </div>
+ </div>
+</div>`;
+}
+function saveEditMatch(){
+ if(!editable())return toast('只读模式：请管理员登录后编辑');
+ try{
+  const g=groups().find(x=>x.key===state.editMatchKey);
+  if(!g)return toast('未找到比赛，请重新打开编辑');
+  if(!document.getElementById('emDate'))return toast('表单未加载，请重新打开编辑');
+  const date=document.getElementById('emDate').value||g.date;
+  const competition=clean(document.getElementById('emComp').value).trim()||g.competition;
+  const opponent=clean(document.getElementById('emOpp').value).trim();
+  if(!opponent)return toast('请填写对手');
+  const ha=state.emHa||g.homeAway;
+  const ts=Number(document.getElementById('emTs').value)||0, os=Number(document.getElementById('emOs').value)||0;
+  const nk=date+'|'+opponent;
+  records.forEach(r=>{if(r.date===g.date&&r.opponent===g.opponent){r.date=date;r.competition=competition;r.opponent=opponent;r.homeAway=ha;r.teamScore=ts;r.opponentScore=os}});
+  const oldCoach='coach-'+g.key,newCoach='coach-'+nk;
+  ratings.forEach(x=>{if(x.recordId===oldCoach)x.recordId=newCoach});
+  if(state.expMatch===g.key)state.expMatch=nk;
+  if(state.sel===g.key)state.sel=nk;
+  state.editMatchKey=nk;state.emHa='';state.editMatchOpen=false;
+  persist();
+  toast('比赛信息已更新');
+  render();
+ }catch(e){toast('保存出错：'+e.message)}
 }
 window.tipShow=function(px,py,d){const t=$('tip');let scoreBlock;
  if(d.all){const items=d.all.split(';').filter(Boolean).map(pair=>{const i=pair.lastIndexOf(':');return{n:pair.slice(0,i),v:pair.slice(i+1)}});
